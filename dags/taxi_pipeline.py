@@ -10,10 +10,15 @@ Replace the stubs, wire the tasks together, and fill in the decorator. The
 autograder fails while any NotImplementedError remains.
 """
 
+import io
 import os
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+import requests
+from airflow.operators.bash import BashOperator
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk import dag, task
 
 # Your per-student schema. AIRFLOW_STUDENT is set in .env for local Astro dev;
@@ -35,27 +40,132 @@ def find_dbt_dir() -> str:
 
 
 DBT_DIR = find_dbt_dir()
+DBT_ENV = {
+    "PG_HOST": "{{ conn.azure_pg.host }}",
+    "PG_USER": "{{ conn.azure_pg.login }}",
+    "PG_PASSWORD": "{{ conn.azure_pg.password }}",
+    "PG_DBNAME": "{{ conn.azure_pg.schema }}",
+    "PG_SCHEMA": SCHEMA,
+}
+
+DBT = (
+    "uvx --python 3.11 "
+    "--from 'dbt-core==1.10.*' "
+    "--with 'dbt-postgres==1.10.*' "
+    "dbt"
+)
 
 
 @dag(
-    # TODO Task 1 (see README): configure the decorator.
+    dag_id="hannahwn_taxi_pipeline",
+    schedule="@monthly",
     start_date=datetime(2024, 1, 1),
+    catchup=False,
+    max_active_runs=1,
+    tags=["week12", "taxi", "student:hannahwn"],
+    default_args={"retries": 2, "retry_delay": 300},
+    # retry transient failures twice
+    
 )
 def taxi_pipeline():
     @task
     def ingest_taxi_month() -> int:
-        """Download one month of TLC green-taxi data and load it into
-        ``{SCHEMA}.raw_trips`` idempotently. Return the number of rows.
+        ds = _partition_date()
+        year_month = ds[:7]  # YYYY-MM  
 
-        TODO Task 2 and Task 3 (see README).
-        """
-        raise NotImplementedError
+        print(f"Processing partition {year_month} for schema {SCHEMA}")
+        
+        url = f"{TLC_BASE}/green_tripdata_{year_month}.parquet"
+        
+    
+         #download parquet
+        response = requests.get(
+            url,
+            timeout=60
+        )
 
-    # TODO Task 2 (see README): add the two transform tasks, wire the full
-    # chain, and run the transform through the Chapter 4 command so it works
-    # on the image's Python. TODO Task 4: add retry behaviour.
+        response.raise_for_status()
 
-    ingest_taxi_month()
+        #parquet to dataframe
+        df = pd.read_parquet(
+            io.BytesIO(response.content)
+        )
 
+
+        hook = PostgresHook(
+            postgres_conn_id="azure_pg"
+        )
+
+
+        engine = hook.get_sqlalchemy_engine()
+        #create schema
+        with hook.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'
+                )
+        #create table if missing
+        df.head(0).to_sql(
+            "raw_trips",
+            engine,
+            schema=SCHEMA,
+            if_exists="append",
+            index=False,
+        )
+         
+        # idempotency remove old data for same month
+        with hook.get_conn() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    f"""
+                    DELETE FROM "{SCHEMA}".raw_trips
+                    WHERE to_char(
+                        lpep_pickup_datetime,
+                        'YYYY-MM'
+                    ) = %s
+                    """,
+                    (year_month,),
+                )
+        #insert fresh data        
+        df.to_sql(
+            "raw_trips",
+            engine,
+            schema=SCHEMA,
+            if_exists="append",
+            index=False,
+        )
+
+
+        return len(df)
+
+
+
+
+    dbt_run = BashOperator(
+        task_id="dbt_run",
+        bash_command=(
+            f"{DBT} deps --project-dir {DBT_DIR} --profiles-dir {DBT_DIR} && "
+            f"{DBT} run --project-dir {DBT_DIR} --profiles-dir {DBT_DIR}"
+        ),
+        env=DBT_ENV,
+        append_env=True,
+    )
+
+    dbt_test = BashOperator(
+        task_id="dbt_test",
+        bash_command=(
+            f"{DBT} test --project-dir {DBT_DIR} --profiles-dir {DBT_DIR}"
+        ),
+        env=DBT_ENV,
+        append_env=True,
+    )
+
+
+    ingest_taxi_month() >> dbt_run >> dbt_test
+   
 
 taxi_pipeline()
+
+
+
