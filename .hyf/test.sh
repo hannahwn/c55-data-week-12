@@ -205,16 +205,16 @@ else
 fi
 # Screenshots: presence only (3 pts). Content (Graph/Grid/log/shared UI) is teacher-reviewed.
 # Ignore dbt package / tooling trees so vendored assets do not count.
-mapfile -t _shot_files < <(
+# Portable count (no mapfile): works on macOS bash 3.2 and Ubuntu CI.
+shot_count=$(
   find "$REPO_ROOT" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' \) \
     ! -path '*/.git/*' \
     ! -path '*/include/dbt_project/*' \
     ! -path '*/.venv/*' \
     ! -path '*/node_modules/*' \
     ! -path '*/__pycache__/*' \
-    | sort
+    | wc -l | tr -d ' '
 )
-shot_count=${#_shot_files[@]}
 if [[ "$shot_count" -ge 3 ]]; then
   l6=$((l6 + 3)); pass "screenshots: found ${shot_count} image file(s) (need ≥3 for Graph + Grid/run + task log)"
 elif [[ "$shot_count" -gt 0 ]]; then
