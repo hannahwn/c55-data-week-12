@@ -123,18 +123,30 @@ if [[ -f "$DAG" ]]; then
   if daggrep "datetime\.now\(|datetime\.today\("; then
     warn "dags/taxi_pipeline.py: datetime.now()/today() found — make sure the PARTITION comes from the logical date, not wall-clock time (Gotcha #1)"
   fi
+  # Remaining 5 pts require BOTH catchup=False and max_active_runs (Gotcha #6:
+  # set it on the @dag decorator, not only on the backfill CLI).
+  has_catchup=0
+  has_max_active=0
   if daggrep "catchup ?= ?False"; then
-    l5=$((l5 + 5)); pass "dags/taxi_pipeline.py: catchup=False set"
+    has_catchup=1
   else
     fail "dags/taxi_pipeline.py: catchup=False not found — required for safe normal operation"
+  fi
+  if daggrep "max_active_runs"; then
+    has_max_active=1
+  else
+    fail "dags/taxi_pipeline.py: max_active_runs not found — set max_active_runs=1 on the @dag decorator (Gotcha #6); CLI --max-active-runs alone is not enough"
+  fi
+  if [[ "$has_catchup" -eq 1 && "$has_max_active" -eq 1 ]]; then
+    l5=$((l5 + 5)); pass "dags/taxi_pipeline.py: catchup=False and max_active_runs set"
   fi
 fi
 score=$((score + l5))
 pass "Level 5: parameterized runs ($l5/15 pts)"
 
 # ── Level 6 (10 pts): docs filled in ────────────────────────────────────────
-# Count TODO markers in visible markdown only. Starter HTML comments like
-# <!-- Replace every TODO ... --> must not fail a filled-in runbook/AI log.
+# Count TODO markers in visible markdown only. Starter HTML comments must not
+# contain the string TODO (use "fill in" / "REPLACE" instead).
 todo_count() {
   local f="$1"
   python3 - "$f" <<'PY'
@@ -144,14 +156,24 @@ text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
 print(len(re.findall(r"TODO", text)))
 PY
 }
+visible_chars() {
+  local f="$1"
+  python3 - "$f" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+print(len(text))
+PY
+}
 l6=0
 runbook="$REPO_ROOT/RUNBOOK.md"
 ai="$REPO_ROOT/AI_ASSIST.md"
+report="$REPO_ROOT/ASSIGNMENT_REPORT.md"
 if file_has_content "$runbook"; then
-  rb_chars=$(wc -c < "$runbook" | tr -d ' ')
+  rb_chars=$(visible_chars "$runbook")
   rb_todo=$(todo_count "$runbook")
   if [[ "$rb_chars" -ge 400 && "$rb_todo" -eq 0 ]]; then
-    l6=$((l6 + 5)); pass "RUNBOOK.md: filled in (${rb_chars} chars, no TODO left)"
+    l6=$((l6 + 4)); pass "RUNBOOK.md: filled in (${rb_chars} chars, no TODO left)"
   else
     fail "RUNBOOK.md: still a template (${rb_chars} chars, ${rb_todo} TODO marker(s)) — fill in all four sections"
   fi
@@ -159,15 +181,26 @@ else
   fail "RUNBOOK.md: empty"
 fi
 if file_has_content "$ai"; then
-  ai_chars=$(wc -c < "$ai" | tr -d ' ')
+  ai_chars=$(visible_chars "$ai")
   ai_todo=$(todo_count "$ai")
   if [[ "$ai_chars" -ge 400 && "$ai_todo" -eq 0 ]]; then
-    l6=$((l6 + 5)); pass "AI_ASSIST.md: filled in (${ai_chars} chars, no TODO left)"
+    l6=$((l6 + 3)); pass "AI_ASSIST.md: filled in (${ai_chars} chars, no TODO left)"
   else
     fail "AI_ASSIST.md: still a template (${ai_chars} chars, ${ai_todo} TODO marker(s))"
   fi
 else
   fail "AI_ASSIST.md: empty"
+fi
+if file_has_content "$report"; then
+  rp_chars=$(visible_chars "$report")
+  rp_todo=$(todo_count "$report")
+  if [[ "$rp_chars" -ge 400 && "$rp_todo" -eq 0 ]]; then
+    l6=$((l6 + 3)); pass "ASSIGNMENT_REPORT.md: filled in (${rp_chars} chars, no TODO left)"
+  else
+    fail "ASSIGNMENT_REPORT.md: still a template (${rp_chars} chars, ${rp_todo} TODO marker(s)) — fill in schedule, deps, backfill, row counts, and shared deploy"
+  fi
+else
+  fail "ASSIGNMENT_REPORT.md: empty"
 fi
 score=$((score + l6))
 pass "Level 6: documentation ($l6/10 pts)"
@@ -176,6 +209,6 @@ pass "Level 6: documentation ($l6/10 pts)"
 print_results "Week 12 Autograder — Orchestrated Pipeline"
 write_score "$score" "$PASSING" "$SCRIPT_DIR/score.json"
 echo ""
-echo "Reminder: the shared-Airflow deploy, the green run, and backfill"
-echo "idempotency are Target-tier items a teacher reviews by hand — a high"
-echo "static score here is necessary but not sufficient for Target."
+echo "Reminder: screenshots, shared-Airflow deploy proof, and before/after"
+echo "row counts are teacher-reviewed. Autograder green is not a pass — a"
+echo "high static score is necessary but not sufficient."
