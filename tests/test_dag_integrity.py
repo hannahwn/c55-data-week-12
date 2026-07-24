@@ -15,17 +15,10 @@ Required for all tiers. Keep it passing.
 from airflow.models import DagBag
 
 
-def _make_dag_bag():
-    """Build a DagBag across Airflow versions with differing signatures."""
-    try:
-        return DagBag(dag_folder="dags", include_examples=False)
-    except TypeError:
-        return DagBag(dag_folder="dags")
-
-
 def test_no_import_errors():
     """Every .py in dags/ must import cleanly."""
-    dag_bag = _make_dag_bag()
+    # Airflow 3 DagBag no longer accepts include_examples.
+    dag_bag = DagBag(dag_folder="dags")
     assert dag_bag.import_errors == {}, (
         f"DAG import errors: {dag_bag.import_errors}"
     )
@@ -33,6 +26,7 @@ def test_no_import_errors():
 
 def test_every_dag_has_tags():
     """Light convention check so DAGs are discoverable via the UI tag filter."""
-    dag_bag = _make_dag_bag()
+    # Airflow 3 DagBag no longer accepts include_examples.
+    dag_bag = DagBag(dag_folder="dags")
     for dag_id, dag in dag_bag.dags.items():
         assert dag.tags, f"DAG {dag_id} is missing tags"
