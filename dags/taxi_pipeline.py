@@ -19,7 +19,7 @@ import pandas as pd
 import requests
 from airflow.operators.bash import BashOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.sdk import dag, task
+from airflow.sdk import dag, task, get_current_context
 
 # Your per-student schema. AIRFLOW_STUDENT is set in .env for local Astro dev;
 # on the shared VM it falls back to the dags/<name>/ directory name.
@@ -54,6 +54,15 @@ DBT = (
     "--with 'dbt-postgres==1.10.*' "
     "dbt"
 )
+
+
+
+def _partition_date() -> str:
+    """Return the logical-date string for the current task run."""
+    context = get_current_context()
+    dag_run = context["dag_run"]
+    date = dag_run.logical_date or dag_run.run_after
+    return date.strftime("%Y-%m-%d")
 
 
 @dag(
